@@ -1,6 +1,8 @@
 package main
 
 import (
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -25,6 +27,22 @@ func TestRangeFor_KnownAndUnknownServices(t *testing.T) {
 	assert.Equal(t, [2]int{15400, 15499}, rangeFor("postgresql"))
 	assert.Equal(t, [2]int{19200, 19299}, rangeFor("opensearch"))
 	assert.Equal(t, genericRange, rangeFor("some-unknown-service"))
+}
+
+func TestRangeFor_ConfigOverridesDefault(t *testing.T) {
+	cfgDir := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", cfgDir)
+	require.NoError(t, os.MkdirAll(filepath.Join(cfgDir, "dibs"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(cfgDir, "dibs", "config.json"), []byte(`{
+		"ranges": {
+			"postgresql": [16000, 16009],
+			"generic": [21000, 21009]
+		}
+	}`), 0o644))
+
+	assert.Equal(t, [2]int{16000, 16009}, rangeFor("postgresql"), "config override must beat the built-in default")
+	assert.Equal(t, [2]int{19200, 19299}, rangeFor("opensearch"), "services not overridden keep their built-in default")
+	assert.Equal(t, [2]int{21000, 21009}, rangeFor("some-unknown-service"), "\"generic\" override must beat the built-in generic range")
 }
 
 func TestPickPortInRange_SkipsTakenAndFindsFree(t *testing.T) {

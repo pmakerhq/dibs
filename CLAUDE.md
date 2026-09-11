@@ -24,6 +24,17 @@ Known limitation: `dibs` must be called directly from the interactive shell, not
 
 **Port ranges** (`ranges.go`): built-in per-service ranges (`postgresql: 15400-15499`, `opensearch: 19200-19299`), unknown services fall back to a generic range (`20000-29999`). Allocation picks the first port in range that's neither already held by a live session nor actually bound on the host (`net.Listen` probe) — so a port used by something outside `dibs`'s own registry is still correctly skipped.
 
+Ranges are overridable via `~/.config/dibs/config.json` (`config.go`, respects `XDG_CONFIG_HOME`):
+```json
+{
+  "ranges": {
+    "postgresql": [16000, 16099],
+    "generic": [21000, 29999]
+  }
+}
+```
+`generic` overrides the fallback range; any other key overrides that service's range, built-in or not.
+
 ## Style
 
 Same conventions as the user's other projects: no comments except where a non-obvious constraint or workaround needs explaining, tests alongside implementation, terse commits.

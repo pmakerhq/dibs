@@ -15,7 +15,14 @@ var defaultRanges = map[string][2]int{
 var genericRange = [2]int{20000, 29999}
 
 func rangeFor(service string) [2]int {
+	overrides := loadRangeOverrides()
+	if r, ok := overrides[service]; ok {
+		return r
+	}
 	if r, ok := defaultRanges[service]; ok {
+		return r
+	}
+	if r, ok := overrides["generic"]; ok {
 		return r
 	}
 	return genericRange

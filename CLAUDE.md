@@ -37,4 +37,4 @@ Ranges are overridable via `~/.config/dibs/config.json` (`config.go`, respects `
 
 ## Style
 
-Same conventions as the user's other projects: no comments except where a non-obvious constraint or workaround needs explaining, tests alongside implementation, terse commits.
+Same conventions as the user's other projects: no comments except where a non-obvious constraint or workaround needs explaining, tests alongside implementation, terse commits. Commit messages always in English, regardless of the language used elsewhere in conversation.

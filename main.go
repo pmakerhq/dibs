@@ -7,10 +7,13 @@ import (
 	"github.com/spf13/cobra"
 )
 
+var version = "dev"
+
 func main() {
 	rootCmd := &cobra.Command{
 		Use:           "dibs <service>",
 		Short:         "Session-scoped port allocator",
+		Version:       version,
 		Args:          cobra.ExactArgs(1),
 		SilenceUsage:  true,
 		SilenceErrors: true,

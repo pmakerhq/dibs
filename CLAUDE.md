@@ -11,8 +11,10 @@ Go, single static binary, no daemon. Lives at `~/Projects/pmaker/dibs`, independ
 - `go vet ./...` — static checks
 - `./dibs <service>` — get/reuse this session's port (e.g. `./dibs postgresql`)
 - `./dibs get <service>` — same, explicit form
-- `./dibs list` — list live allocations (also runs GC)
-- `./dibs release <service>` — free this session's port for `<service>` early
+- `./dibs env <service...>` — print `export SERVICE_PORT=<port>` for one or more services
+- `./dibs list` / `./dibs list --json` — list live allocations (also runs GC)
+- `./dibs release <service>` / `./dibs release --all` — free this session's port(s) early
+- `./dibs doctor` — check on-disk state (registry, lock, range config) for issues
 
 ## Architecture
 

@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"net"
+	"sort"
 )
 
 // defaultRanges are the built-in port ranges for known services.
@@ -52,6 +53,47 @@ func pickPortInRange(r [2]int, taken map[int]bool) (int, error) {
 		}
 	}
 	return 0, fmt.Errorf("no free port in range %d-%d", r[0], r[1])
+}
+
+// effectiveRanges merges the built-in per-service ranges with config
+// overrides (overrides win), excluding the "generic" fallback: generic is
+// meant to cover any service *without* a dedicated range, so it overlapping
+// a named range is by design, not a conflict.
+func effectiveRanges() map[string][2]int {
+	merged := map[string][2]int{}
+	for svc, r := range defaultRanges {
+		merged[svc] = r
+	}
+	for svc, r := range loadRangeOverrides() {
+		if svc == "generic" {
+			continue
+		}
+		merged[svc] = r
+	}
+	return merged
+}
+
+// checkRangeOverlaps reports every pair of named-service ranges (built-in or
+// config-overridden) whose bounds overlap, since two such services could be
+// requested concurrently and collide on the same port.
+func checkRangeOverlaps() []string {
+	ranges := effectiveRanges()
+	names := make([]string, 0, len(ranges))
+	for svc := range ranges {
+		names = append(names, svc)
+	}
+	sort.Strings(names)
+
+	var conflicts []string
+	for i, a := range names {
+		for _, b := range names[i+1:] {
+			ra, rb := ranges[a], ranges[b]
+			if ra[0] <= rb[1] && rb[0] <= ra[1] {
+				conflicts = append(conflicts, fmt.Sprintf("%s [%d-%d] overlaps %s [%d-%d]", a, ra[0], ra[1], b, rb[0], rb[1]))
+			}
+		}
+	}
+	return conflicts
 }
 
 func pickPort(service string, taken map[int]bool) (int, error) {

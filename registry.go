@@ -128,9 +128,15 @@ func cmdGet(service string) (int, error) {
 	if err != nil {
 		return 0, err
 	}
+	return allocateFor(service, key, pid, startedAt)
+}
 
+// allocateFor is cmdGet's session-agnostic core, split out so tests can
+// exercise concurrent allocation across synthetic sessions without needing
+// distinct real processes.
+func allocateFor(service, key string, pid int32, startedAt int64) (int, error) {
 	var port int
-	err = withLock(func() error {
+	err := withLock(func() error {
 		reg, err := loadRegistry()
 		if err != nil {
 			return err
@@ -179,6 +185,30 @@ func cmdRelease(service string) error {
 		kept := live[:0]
 		for _, e := range live {
 			if e.SessionKey == key && e.Service == service {
+				continue
+			}
+			kept = append(kept, e)
+		}
+		reg.Allocations = kept
+		return saveRegistry(reg)
+	})
+}
+
+// cmdReleaseAll drops every allocation the current session holds.
+func cmdReleaseAll() error {
+	key, _, _, err := currentSession()
+	if err != nil {
+		return err
+	}
+	return withLock(func() error {
+		reg, err := loadRegistry()
+		if err != nil {
+			return err
+		}
+		live, _ := gc(reg)
+		kept := live[:0]
+		for _, e := range live {
+			if e.SessionKey == key {
 				continue
 			}
 			kept = append(kept, e)

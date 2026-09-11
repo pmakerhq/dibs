@@ -1,8 +1,10 @@
 package main
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -91,4 +93,69 @@ func TestCmdRelease_FreesPortForReallocation(t *testing.T) {
 	p2, err := cmdGet("dibs-test-service-b")
 	require.NoError(t, err)
 	assert.Equal(t, p1, p2, "same session re-requesting after release gets the lowest free port again")
+}
+
+func TestCmdReleaseAll_FreesEverySessionPort(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+
+	_, err := cmdGet("dibs-test-service-c")
+	require.NoError(t, err)
+	_, err = cmdGet("dibs-test-service-d")
+	require.NoError(t, err)
+
+	require.NoError(t, cmdReleaseAll())
+
+	entries, err := cmdList()
+	require.NoError(t, err)
+	assert.Empty(t, entries, "release --all must drop every allocation for the current session")
+}
+
+func TestCheckRangeOverlaps_DetectsAndClearsConflicts(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	assert.Empty(t, checkRangeOverlaps(), "built-in ranges must not overlap")
+
+	cfgDir := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", cfgDir)
+	require.NoError(t, os.MkdirAll(filepath.Join(cfgDir, "dibs"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(cfgDir, "dibs", "config.json"), []byte(`{
+		"ranges": {
+			"redis": [15450, 15460]
+		}
+	}`), 0o644))
+
+	conflicts := checkRangeOverlaps()
+	require.Len(t, conflicts, 1, "redis range must be flagged as overlapping postgresql's")
+	assert.Contains(t, conflicts[0], "postgresql")
+	assert.Contains(t, conflicts[0], "redis")
+}
+
+func TestAllocateFor_ConcurrentSessionsNeverCollide(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+
+	// Every synthetic session shares this test process's own pid+start
+	// time, so gc() sees them all as genuinely alive; only the session key
+	// differs, which is what should keep their ports distinct.
+	pid := int32(os.Getpid())
+	startedAt, err := processStartTime(pid)
+	require.NoError(t, err)
+
+	const sessions = 20
+	ports := make([]int, sessions)
+	errs := make([]error, sessions)
+	var wg sync.WaitGroup
+	for i := 0; i < sessions; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			ports[i], errs[i] = allocateFor("dibs-test-stress", fmt.Sprintf("session-%d", i), pid, startedAt)
+		}(i)
+	}
+	wg.Wait()
+
+	seen := map[int]bool{}
+	for i := 0; i < sessions; i++ {
+		require.NoError(t, errs[i])
+		assert.False(t, seen[ports[i]], "port %d was allocated to more than one session", ports[i])
+		seen[ports[i]] = true
+	}
 }

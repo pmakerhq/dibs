@@ -53,11 +53,16 @@ xattr -d com.apple.quarantine dibs
 ## Usage
 
 ```
-dibs <service>            # get (or reuse) this session's port for <service>
-dibs get <service>        # same thing, explicit form
-dibs list                 # list all live allocations across every session
-dibs release <service>    # free this session's port for <service> early
-dibs --version            # print the build version
+dibs <service>              # get (or reuse) this session's port for <service>
+dibs get <service>          # same thing, explicit form
+dibs env <service...>       # print export SERVICE_PORT=<port> for one or more services
+dibs list                   # list all live allocations across every session
+dibs list --json            # same, as JSON
+dibs release <service>      # free this session's port for <service> early
+dibs release --all          # free every port this session holds
+dibs doctor                 # check dibs' on-disk state and config for issues
+dibs --version               # print the build version
+dibs completion <shell>      # generate a shell completion script
 ```
 
 `<service>` is just a label — `postgresql`, `opensearch`, `redis`, whatever you're running. Known services get sensible built-in ranges; anything else falls back to a generic range.
@@ -70,7 +75,23 @@ export PGPORT=$(dibs postgresql)
 docker run -p "$PGPORT:5432" postgres
 ```
 
-Run that script from two different terminals and each gets its own Postgres container on its own port, with zero coordination.
+Or with `dibs env`, for multiple services at once:
+
+```bash
+eval "$(dibs env postgresql opensearch)"
+docker run -p "$POSTGRESQL_PORT:5432" postgres
+docker run -p "$OPENSEARCH_PORT:9200" opensearchproject/opensearch
+```
+
+Run that script from two different terminals and each gets its own containers on their own ports, with zero coordination.
+
+### Shell completion
+
+`dibs` ships with [Cobra](https://github.com/spf13/cobra)'s built-in completion generator:
+
+```bash
+source <(dibs completion zsh)    # or bash / fish / powershell
+```
 
 ## Built-in port ranges
 

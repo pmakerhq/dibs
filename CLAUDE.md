@@ -38,3 +38,12 @@ Ranges are overridable via `~/.config/dibs/config.json` (`config.go`, respects `
 ## Style
 
 Same conventions as the user's other projects: no comments except where a non-obvious constraint or workaround needs explaining, tests alongside implementation, terse commits. Commit messages always in English, regardless of the language used elsewhere in conversation.
+
+## Guidelines
+
+Behavioral guidelines to reduce common LLM coding mistakes (adapted from [andrej-karpathy-skills](https://github.com/forrestchang/andrej-karpathy-skills)). Bias toward caution over speed; use judgment on trivial tasks.
+
+1. **Think before coding.** Don't assume, don't hide confusion. State assumptions explicitly; if multiple interpretations exist, present them instead of picking silently; if something is unclear, stop and ask.
+2. **Simplicity first.** Minimum code that solves the problem — no speculative features, no unrequested abstractions or configurability, no error handling for impossible scenarios.
+3. **Surgical changes.** Touch only what the task requires: don't "improve" adjacent code or refactor things that aren't broken, match existing style, only remove dead code your own change orphaned. Every changed line should trace to the request.
+4. **Goal-driven execution.** Turn tasks into verifiable goals (e.g. "fix the bug" → write a failing test, then make it pass) and loop until verified before claiming done.

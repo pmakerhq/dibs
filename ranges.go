@@ -15,15 +15,23 @@ var defaultRanges = map[string][2]int{
 // genericRange is used for any service without a dedicated range.
 var genericRange = [2]int{20000, 29999}
 
+// validRange rejects bounds that can't describe a usable port span, so a
+// typo'd config (inverted bounds, port 0, above 65535) falls back to the
+// built-ins instead of handing out a nonsense port. `dibs doctor` reports
+// the ones that were ignored.
+func validRange(r [2]int) bool {
+	return r[0] >= 1 && r[1] <= 65535 && r[0] <= r[1]
+}
+
 func rangeFor(service string) [2]int {
-	overrides := loadRangeOverrides()
-	if r, ok := overrides[service]; ok {
+	overrides, _ := loadRangeOverrides()
+	if r, ok := overrides[service]; ok && validRange(r) {
 		return r
 	}
 	if r, ok := defaultRanges[service]; ok {
 		return r
 	}
-	if r, ok := overrides["generic"]; ok {
+	if r, ok := overrides["generic"]; ok && validRange(r) {
 		return r
 	}
 	return genericRange
@@ -64,7 +72,8 @@ func effectiveRanges() map[string][2]int {
 	for svc, r := range defaultRanges {
 		merged[svc] = r
 	}
-	for svc, r := range loadRangeOverrides() {
+	overrides, _ := loadRangeOverrides()
+	for svc, r := range overrides {
 		if svc == "generic" {
 			continue
 		}
@@ -73,21 +82,47 @@ func effectiveRanges() map[string][2]int {
 	return merged
 }
 
+func sortedNames(m map[string][2]int) []string {
+	names := make([]string, 0, len(m))
+	for svc := range m {
+		names = append(names, svc)
+	}
+	sort.Strings(names)
+	return names
+}
+
+// checkRangeBounds reports every configured range whose bounds can't describe
+// a usable port span; such ranges are ignored at allocation time.
+func checkRangeBounds() []string {
+	ranges := effectiveRanges()
+	overrides, _ := loadRangeOverrides()
+	if g, ok := overrides["generic"]; ok {
+		ranges["generic"] = g
+	}
+
+	var problems []string
+	for _, svc := range sortedNames(ranges) {
+		if r := ranges[svc]; !validRange(r) {
+			problems = append(problems, fmt.Sprintf("%s [%d-%d] is not a usable port range, ignored", svc, r[0], r[1]))
+		}
+	}
+	return problems
+}
+
 // checkRangeOverlaps reports every pair of named-service ranges (built-in or
 // config-overridden) whose bounds overlap, since two such services could be
 // requested concurrently and collide on the same port.
 func checkRangeOverlaps() []string {
 	ranges := effectiveRanges()
-	names := make([]string, 0, len(ranges))
-	for svc := range ranges {
-		names = append(names, svc)
-	}
-	sort.Strings(names)
+	names := sortedNames(ranges)
 
 	var conflicts []string
 	for i, a := range names {
 		for _, b := range names[i+1:] {
 			ra, rb := ranges[a], ranges[b]
+			if !validRange(ra) || !validRange(rb) {
+				continue
+			}
 			if ra[0] <= rb[1] && rb[0] <= ra[1] {
 				conflicts = append(conflicts, fmt.Sprintf("%s [%d-%d] overlaps %s [%d-%d]", a, ra[0], ra[1], b, rb[0], rb[1]))
 			}

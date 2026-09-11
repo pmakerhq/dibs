@@ -142,10 +142,14 @@ func allocateFor(service, key string, pid int32, startedAt int64) (int, error) {
 			return err
 		}
 		live, taken := gc(reg)
+		collected := len(live) != len(reg.Allocations)
 
 		for _, e := range live {
 			if e.SessionKey == key && e.Service == service {
 				port = e.Port
+				if !collected {
+					return nil
+				}
 				reg.Allocations = live
 				return saveRegistry(reg)
 			}
@@ -189,6 +193,9 @@ func cmdRelease(service string) error {
 			}
 			kept = append(kept, e)
 		}
+		if len(kept) == len(reg.Allocations) {
+			return nil
+		}
 		reg.Allocations = kept
 		return saveRegistry(reg)
 	})
@@ -213,6 +220,9 @@ func cmdReleaseAll() error {
 			}
 			kept = append(kept, e)
 		}
+		if len(kept) == len(reg.Allocations) {
+			return nil
+		}
 		reg.Allocations = kept
 		return saveRegistry(reg)
 	})
@@ -227,6 +237,9 @@ func cmdList() ([]Entry, error) {
 			return err
 		}
 		live, _ = gc(reg)
+		if len(live) == len(reg.Allocations) {
+			return nil
+		}
 		reg.Allocations = live
 		return saveRegistry(reg)
 	})

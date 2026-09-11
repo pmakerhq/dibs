@@ -19,6 +19,9 @@ func cmdDoctor() error {
 		}
 		fmt.Printf("%s %s\n", mark, fmt.Sprintf(format, args...))
 	}
+	info := func(format string, args ...any) {
+		fmt.Printf("i %s\n", fmt.Sprintf(format, args...))
+	}
 
 	if dir, err := stateDir(); err != nil {
 		report(false, "state dir: %v", err)
@@ -33,21 +36,35 @@ func cmdDoctor() error {
 		report(true, "registry.json: %d entries", len(reg.Allocations))
 		live, _ := gc(reg)
 		if dead := len(reg.Allocations) - len(live); dead > 0 {
-			fmt.Printf("i %d dead entries will be cleared on next call\n", dead)
+			info("%d dead entries will be cleared on next call", dead)
 		}
 	}
 
+	// A held lock just means another dibs call is in flight, which is
+	// normal — informational, never a health failure.
 	if lp, err := lockPath(); err != nil {
 		report(false, "lock file: %v", err)
 	} else {
 		fl := flock.New(lp)
-		locked, err := fl.TryLock()
-		if err != nil || !locked {
-			report(false, "lock file: held by another process")
+		if locked, err := fl.TryLock(); err != nil {
+			report(false, "lock file: %v", err)
+		} else if !locked {
+			info("lock file: currently held by another dibs call")
 		} else {
 			report(true, "lock file: free")
 			fl.Unlock()
 		}
+	}
+
+	cp, _ := configPath()
+	if overrides, err := loadRangeOverrides(); err != nil {
+		report(false, "config: %v", err)
+	} else {
+		report(true, "config: %s (%d range overrides)", cp, len(overrides))
+	}
+
+	for _, p := range checkRangeBounds() {
+		report(false, "invalid range: %s", p)
 	}
 
 	conflicts := checkRangeOverlaps()

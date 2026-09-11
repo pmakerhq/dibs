@@ -67,6 +67,8 @@ dibs completion <shell>      # generate a shell completion script
 
 `<service>` is just a label — `postgresql`, `opensearch`, `redis`, whatever you're running. Known services get sensible built-in ranges; anything else falls back to a generic range.
 
+`dibs env` derives the variable name from the service: every non-alphanumeric character becomes `_` and the whole thing is upper-cased, so `my.service` yields `MY_SERVICE_PORT`.
+
 ### Example: wiring it into a dev script
 
 ```bash
@@ -112,6 +114,24 @@ Override any of these — or the generic fallback — in `~/.config/dibs/config.
 }
 ```
 
+A range is only used if it describes a usable span (`1 <= low <= high <= 65535`); anything else — inverted bounds, a range including port 0 — is ignored in favour of the built-in range. A malformed `config.json` is likewise ignored rather than fatal, so a bad edit never breaks port allocation mid-session. Run `dibs doctor` to see what was ignored and why.
+
+## Diagnostics
+
+`dibs doctor` checks the on-disk state and config, printing one line per check and exiting non-zero if anything is wrong:
+
+```
+$ dibs doctor
+✓ state dir: /Users/you/.local/state/dibs
+✓ registry.json: 6 entries
+i 2 dead entries will be cleared on next call
+✓ lock file: free
+✓ config: /Users/you/.config/dibs/config.json (1 range overrides)
+✗ range conflict: postgresql [15400-15499] overlaps redis [15450-15460]
+```
+
+Lines marked `i` are informational and don't affect the exit code — a lock held by a concurrent `dibs` call is normal, not a fault.
+
 ## Known limitation
 
 `dibs` must be invoked directly from the interactive shell, not through an intermediate forked subshell (some `bash -c` invocations, depending on whether bash tail-exec-optimizes the call away). A forked subshell has its own PID, so calls from it may not resolve to the same session as its parent shell.
@@ -119,8 +139,8 @@ Override any of these — or the generic fallback — in `~/.config/dibs/config.
 ## Development
 
 ```
-go build -o dibs .   # build
-go test ./...        # test
+go build -o dibs .    # build
+go test -race ./...   # test (CI runs the race detector too)
 go vet ./...          # static checks
 ```
 

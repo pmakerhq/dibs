@@ -11,6 +11,22 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// isolate points HOME and XDG_CONFIG_HOME at empty temp dirs, so a test
+// never reads (or writes) the developer's real registry or config.
+func isolate(t *testing.T) {
+	t.Helper()
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+}
+
+// writeConfig writes a dibs config.json into an isolated XDG_CONFIG_HOME.
+func writeConfig(t *testing.T, body string) {
+	t.Helper()
+	dir := filepath.Join(os.Getenv("XDG_CONFIG_HOME"), "dibs")
+	require.NoError(t, os.MkdirAll(dir, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "config.json"), []byte(body), 0o644))
+}
+
 func TestSessionKeyFor_StableForSameInputs(t *testing.T) {
 	a := sessionKeyFor(4821, 1757577600000)
 	b := sessionKeyFor(4821, 1757577600000)
@@ -26,21 +42,20 @@ func TestSessionKeyFor_DiffersOnPidReuse(t *testing.T) {
 }
 
 func TestRangeFor_KnownAndUnknownServices(t *testing.T) {
+	isolate(t)
 	assert.Equal(t, [2]int{15400, 15499}, rangeFor("postgresql"))
 	assert.Equal(t, [2]int{19200, 19299}, rangeFor("opensearch"))
 	assert.Equal(t, genericRange, rangeFor("some-unknown-service"))
 }
 
 func TestRangeFor_ConfigOverridesDefault(t *testing.T) {
-	cfgDir := t.TempDir()
-	t.Setenv("XDG_CONFIG_HOME", cfgDir)
-	require.NoError(t, os.MkdirAll(filepath.Join(cfgDir, "dibs"), 0o755))
-	require.NoError(t, os.WriteFile(filepath.Join(cfgDir, "dibs", "config.json"), []byte(`{
+	isolate(t)
+	writeConfig(t, `{
 		"ranges": {
 			"postgresql": [16000, 16009],
 			"generic": [21000, 21009]
 		}
-	}`), 0o644))
+	}`)
 
 	assert.Equal(t, [2]int{16000, 16009}, rangeFor("postgresql"), "config override must beat the built-in default")
 	assert.Equal(t, [2]int{19200, 19299}, rangeFor("opensearch"), "services not overridden keep their built-in default")
@@ -65,7 +80,7 @@ func TestPickPortInRange_ErrorsWhenExhausted(t *testing.T) {
 }
 
 func TestCmdGet_SameSessionReusesPort(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
+	isolate(t)
 
 	p1, err := cmdGet("dibs-test-service-a")
 	require.NoError(t, err)
@@ -77,7 +92,7 @@ func TestCmdGet_SameSessionReusesPort(t *testing.T) {
 }
 
 func TestCmdRelease_FreesPortForReallocation(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
+	isolate(t)
 
 	p1, err := cmdGet("dibs-test-service-b")
 	require.NoError(t, err)
@@ -96,7 +111,7 @@ func TestCmdRelease_FreesPortForReallocation(t *testing.T) {
 }
 
 func TestCmdReleaseAll_FreesEverySessionPort(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
+	isolate(t)
 
 	_, err := cmdGet("dibs-test-service-c")
 	require.NoError(t, err)
@@ -111,17 +126,14 @@ func TestCmdReleaseAll_FreesEverySessionPort(t *testing.T) {
 }
 
 func TestCheckRangeOverlaps_DetectsAndClearsConflicts(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
+	isolate(t)
 	assert.Empty(t, checkRangeOverlaps(), "built-in ranges must not overlap")
 
-	cfgDir := t.TempDir()
-	t.Setenv("XDG_CONFIG_HOME", cfgDir)
-	require.NoError(t, os.MkdirAll(filepath.Join(cfgDir, "dibs"), 0o755))
-	require.NoError(t, os.WriteFile(filepath.Join(cfgDir, "dibs", "config.json"), []byte(`{
+	writeConfig(t, `{
 		"ranges": {
 			"redis": [15450, 15460]
 		}
-	}`), 0o644))
+	}`)
 
 	conflicts := checkRangeOverlaps()
 	require.Len(t, conflicts, 1, "redis range must be flagged as overlapping postgresql's")
@@ -130,7 +142,7 @@ func TestCheckRangeOverlaps_DetectsAndClearsConflicts(t *testing.T) {
 }
 
 func TestAllocateFor_ConcurrentSessionsNeverCollide(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
+	isolate(t)
 
 	// Every synthetic session shares this test process's own pid+start
 	// time, so gc() sees them all as genuinely alive; only the session key
@@ -158,4 +170,37 @@ func TestAllocateFor_ConcurrentSessionsNeverCollide(t *testing.T) {
 		assert.False(t, seen[ports[i]], "port %d was allocated to more than one session", ports[i])
 		seen[ports[i]] = true
 	}
+}
+
+func TestLoadRangeOverrides_ReportsMalformedConfig(t *testing.T) {
+	isolate(t)
+	writeConfig(t, `{"ranges": {`)
+
+	_, err := loadRangeOverrides()
+	assert.Error(t, err, "a malformed config must be reported, not silently ignored")
+	assert.Equal(t, [2]int{15400, 15499}, rangeFor("postgresql"), "allocation still falls back to the built-in range")
+}
+
+func TestRangeFor_IgnoresInvalidOverrides(t *testing.T) {
+	isolate(t)
+	writeConfig(t, `{
+		"ranges": {
+			"postgresql": [16100, 16000],
+			"generic": [0, 100]
+		}
+	}`)
+
+	assert.Equal(t, [2]int{15400, 15499}, rangeFor("postgresql"), "inverted bounds must fall back to the built-in range")
+	assert.Equal(t, genericRange, rangeFor("some-unknown-service"), "a range including port 0 must fall back to the built-in generic range")
+
+	problems := checkRangeBounds()
+	require.Len(t, problems, 2, "doctor must surface both invalid ranges")
+	assert.Contains(t, problems[0], "generic")
+	assert.Contains(t, problems[1], "postgresql")
+}
+
+func TestEnvVarName_ShellSafe(t *testing.T) {
+	assert.Equal(t, "POSTGRESQL_PORT", envVarName("postgresql"))
+	assert.Equal(t, "MY_SERVICE_PORT", envVarName("my-service"))
+	assert.Equal(t, "MY_SERVICE_PORT", envVarName("my.service"))
 }

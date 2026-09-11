@@ -98,10 +98,6 @@ func runGet(service string) error {
 	return nil
 }
 
-func runRelease(service string) error {
-	return cmdRelease(service)
-}
-
 func runList(asJSON bool) error {
 	entries, err := cmdList()
 	if err != nil {
@@ -125,10 +121,19 @@ func runList(asJSON bool) error {
 	return nil
 }
 
-// envVarName turns a service name into an env var name, e.g.
+// envVarName turns a service name into a shell-safe env var name, e.g.
 // "postgresql" -> "POSTGRESQL_PORT", "my-service" -> "MY_SERVICE_PORT".
+// Anything that isn't alphanumeric becomes "_", so `eval $(dibs env ...)`
+// can't emit an unassignable name for a service like "my.service".
 func envVarName(service string) string {
-	return strings.ToUpper(strings.ReplaceAll(service, "-", "_")) + "_PORT"
+	safe := strings.Map(func(r rune) rune {
+		switch {
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9':
+			return r
+		}
+		return '_'
+	}, service)
+	return strings.ToUpper(safe) + "_PORT"
 }
 
 func runEnv(services []string) error {

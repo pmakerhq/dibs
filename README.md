@@ -5,11 +5,11 @@
 ```
 $ cd ~/Projects/shop
 $ dibs postgresql
-15400
+20000
 $ dibs postgresql
-15400
+20000
 $ dibs opensearch
-19200
+20001
 ```
 
 Move to another project and run the same command — you get a *different* port, guaranteed not to collide with the first one.
@@ -17,7 +17,7 @@ Move to another project and run the same command — you get a *different* port,
 ```
 $ cd ~/Projects/blog
 $ dibs postgresql
-15401
+20002
 ```
 
 ## Why
@@ -75,7 +75,7 @@ dibs --version              # print the build version
 dibs completion <shell>     # generate a shell completion script
 ```
 
-`<service>` is just a label — `postgresql`, `opensearch`, `redis`, whatever you're running. Known services get sensible built-in ranges; anything else falls back to a generic range.
+`<service>` is just a label — `postgresql`, `opensearch`, `redis`, whatever you're running. Every service falls back to the same generic range unless you give it its own in `config.json`.
 
 `dibs env` derives the variable name from the service: every non-alphanumeric character becomes `_`, a leading digit gets an `_` prefix, and the whole thing is upper-cased — so `my.service` yields `MY_SERVICE_PORT` and `3scale` yields `_3SCALE_PORT`.
 
@@ -105,26 +105,21 @@ Run that script in two different repos and each gets its own containers on their
 source <(dibs completion zsh)    # or bash / fish / powershell
 ```
 
-## Built-in port ranges
+## Port ranges
 
-| Service      | Range         |
-|--------------|---------------|
-| `postgresql` | 15400–15499   |
-| `opensearch` | 19200–19299   |
-| *(anything else)* | 20000–29999 |
-
-Override any of these — or the generic fallback — in `~/.config/dibs/config.json` (respects `XDG_CONFIG_HOME`):
+Every service draws from one generic range (`20000–29999`) unless you give it its own in `~/.config/dibs/config.json` (respects `XDG_CONFIG_HOME`):
 
 ```json
 {
   "ranges": {
-    "postgresql": [16000, 16099],
+    "postgresql": [15400, 15499],
+    "opensearch": [19200, 19299],
     "generic": [21000, 29999]
   }
 }
 ```
 
-A range is only used if it describes a usable span (`1 <= low <= high <= 65535`); anything else — inverted bounds, a range including port 0 — is ignored in favour of the built-in range. A malformed `config.json` is likewise ignored rather than fatal, so a bad edit never breaks port allocation. Run `dibs doctor` to see what was ignored and why.
+A range is only used if it describes a usable span (`1 <= low <= high <= 65535`); anything else — inverted bounds, a range including port 0 — is ignored in favour of the generic range. A malformed `config.json` is likewise ignored rather than fatal, so a bad edit never breaks port allocation. Run `dibs doctor` to see what was ignored and why.
 
 ## Diagnostics
 
@@ -147,7 +142,7 @@ Lines marked `i` are informational and don't affect the exit code — a lock hel
 
 Ports are held per project, so two terminals in the *same* project share one port per service — that's the point. If you need two isolated instances of the same service in the same repo, ask for two different service labels (`dibs postgresql-a`, `dibs postgresql-b`).
 
-Allocations are permanent until released. A project you abandon without deleting its directory keeps its ports reserved, so a built-in range (100 ports wide) can eventually fill up; `dibs doctor` warns once a range is 80% allocated, `dibs list` shows who holds what, and `dibs release --all` from a project frees its ports.
+Allocations are permanent until released. A project you abandon without deleting its directory keeps its ports reserved, so a narrow range can eventually fill up; `dibs doctor` warns once a range is 80% allocated, `dibs list` shows who holds what, and `dibs release --all` from a project frees its ports.
 
 Running `git init` in a parent directory moves the project root up, so the enclosing repo becomes the project and gets a fresh port. The old, now unreachable entry is reclaimed automatically on the next call rather than staying reserved forever.
 

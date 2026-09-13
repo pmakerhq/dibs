@@ -63,14 +63,13 @@ func TestProjectRoot_FallsBackToWorkingDir(t *testing.T) {
 	assert.Equal(t, resolved, chdirProject(t, dir), "outside a repo, the working directory is the project")
 }
 
-func TestRangeFor_KnownAndUnknownServices(t *testing.T) {
+func TestRangeFor_UnconfiguredServiceFallsBackToGeneric(t *testing.T) {
 	isolate(t)
-	assert.Equal(t, [2]int{15400, 15499}, rangeFor("postgresql"))
-	assert.Equal(t, [2]int{19200, 19299}, rangeFor("opensearch"))
+	assert.Equal(t, genericRange, rangeFor("postgresql"))
 	assert.Equal(t, genericRange, rangeFor("some-unknown-service"))
 }
 
-func TestRangeFor_ConfigOverridesDefault(t *testing.T) {
+func TestRangeFor_ConfigOverrides(t *testing.T) {
 	isolate(t)
 	writeConfig(t, `{
 		"ranges": {
@@ -79,9 +78,8 @@ func TestRangeFor_ConfigOverridesDefault(t *testing.T) {
 		}
 	}`)
 
-	assert.Equal(t, [2]int{16000, 16009}, rangeFor("postgresql"), "config override must beat the built-in default")
-	assert.Equal(t, [2]int{19200, 19299}, rangeFor("opensearch"), "services not overridden keep their built-in default")
-	assert.Equal(t, [2]int{21000, 21009}, rangeFor("some-unknown-service"), "\"generic\" override must beat the built-in generic range")
+	assert.Equal(t, [2]int{16000, 16009}, rangeFor("postgresql"), "an overridden service uses its configured range")
+	assert.Equal(t, [2]int{21000, 21009}, rangeFor("opensearch"), "an unconfigured service falls back to the \"generic\" override")
 }
 
 func TestPickPortInRange_SkipsTakenAndFindsFree(t *testing.T) {
@@ -179,10 +177,11 @@ func TestCmdReleaseAll_FreesEveryProjectPort(t *testing.T) {
 
 func TestCheckRangeOverlaps_DetectsAndClearsConflicts(t *testing.T) {
 	isolate(t)
-	assert.Empty(t, checkRangeOverlaps(), "built-in ranges must not overlap")
+	assert.Empty(t, checkRangeOverlaps(), "no configured ranges means nothing can overlap")
 
 	writeConfig(t, `{
 		"ranges": {
+			"postgresql": [15400, 15499],
 			"redis": [15450, 15460]
 		}
 	}`)
@@ -333,7 +332,7 @@ func TestLoadRangeOverrides_ReportsMalformedConfig(t *testing.T) {
 
 	_, err := loadRangeOverrides()
 	assert.Error(t, err, "a malformed config must be reported, not silently ignored")
-	assert.Equal(t, [2]int{15400, 15499}, rangeFor("postgresql"), "allocation still falls back to the built-in range")
+	assert.Equal(t, genericRange, rangeFor("postgresql"), "allocation still falls back to the generic range")
 }
 
 func TestRangeFor_IgnoresInvalidOverrides(t *testing.T) {
@@ -345,7 +344,7 @@ func TestRangeFor_IgnoresInvalidOverrides(t *testing.T) {
 		}
 	}`)
 
-	assert.Equal(t, [2]int{15400, 15499}, rangeFor("postgresql"), "inverted bounds must fall back to the built-in range")
+	assert.Equal(t, genericRange, rangeFor("postgresql"), "inverted bounds must fall back to the generic range")
 	assert.Equal(t, genericRange, rangeFor("some-unknown-service"), "a range including port 0 must fall back to the built-in generic range")
 
 	problems := checkRangeBounds()
@@ -405,7 +404,7 @@ func TestCmdDoctor_PassesCleanStateAndFlagsBadConfig(t *testing.T) {
 	require.NoError(t, cmdDoctor(&buf), "a clean state must pass every check")
 	assert.NotContains(t, buf.String(), "\u2717")
 
-	writeConfig(t, `{"ranges": {"redis": [15450, 15460]}}`)
+	writeConfig(t, `{"ranges": {"postgresql": [15400, 15499], "redis": [15450, 15460]}}`)
 	buf.Reset()
 	assert.Error(t, cmdDoctor(&buf), "an overlapping range must fail the health gate")
 	assert.Contains(t, buf.String(), "range conflict")

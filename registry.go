@@ -13,9 +13,7 @@ import (
 type Entry struct {
 	Service     string `json:"service"`
 	Port        int    `json:"port"`
-	SessionKey  string `json:"session_key"`
-	PID         int32  `json:"pid"`
-	StartedAt   int64  `json:"started_at"`
+	Project     string `json:"project"`
 	AllocatedAt string `json:"allocated_at"`
 }
 
@@ -52,8 +50,8 @@ func lockPath() (string, error) {
 }
 
 // withLock runs fn while holding an exclusive advisory lock on the
-// registry's lock file, so concurrent `dibs` calls (e.g. two terminals
-// launched at once) don't race on registry.json.
+// registry's lock file, so concurrent `dibs` calls (e.g. two projects
+// starting at once) don't race on registry.json.
 func withLock(fn func() error) error {
 	lp, err := lockPath()
 	if err != nil {
@@ -108,12 +106,13 @@ func saveRegistry(reg *Registry) error {
 	return os.Rename(tmp, rp)
 }
 
-// gc drops entries whose owning shell is no longer alive and returns the
-// still-live entries plus the set of ports they hold.
+// gc drops entries whose project directory is gone (and, incidentally,
+// entries written by the pre-project registry format, which carry no path)
+// and returns the surviving entries plus the set of ports they hold.
 func gc(reg *Registry) (live []Entry, taken map[int]bool) {
 	taken = map[int]bool{}
 	for _, e := range reg.Allocations {
-		if isAlive(e.PID, e.StartedAt) {
+		if projectAlive(e.Project) {
 			live = append(live, e)
 			taken[e.Port] = true
 		}
@@ -121,20 +120,19 @@ func gc(reg *Registry) (live []Entry, taken map[int]bool) {
 	return live, taken
 }
 
-// cmdGet returns the port for (session, service), allocating one if this
-// session doesn't already hold it.
+// cmdGet returns the port for (project, service), allocating one if this
+// project doesn't already hold it.
 func cmdGet(service string) (int, error) {
-	key, pid, startedAt, err := currentSession()
+	project, err := projectRoot()
 	if err != nil {
 		return 0, err
 	}
-	return allocateFor(service, key, pid, startedAt)
+	return allocateFor(service, project)
 }
 
-// allocateFor is cmdGet's session-agnostic core, split out so tests can
-// exercise concurrent allocation across synthetic sessions without needing
-// distinct real processes.
-func allocateFor(service, key string, pid int32, startedAt int64) (int, error) {
+// allocateFor is cmdGet's core, split out so tests can exercise concurrent
+// allocation across several projects from a single working directory.
+func allocateFor(service, project string) (int, error) {
 	var port int
 	err := withLock(func() error {
 		reg, err := loadRegistry()
@@ -145,7 +143,7 @@ func allocateFor(service, key string, pid int32, startedAt int64) (int, error) {
 		collected := len(live) != len(reg.Allocations)
 
 		for _, e := range live {
-			if e.SessionKey == key && e.Service == service {
+			if e.Service == service && sameProject(e.Project, project) {
 				port = e.Port
 				if !collected {
 					return nil
@@ -162,9 +160,7 @@ func allocateFor(service, key string, pid int32, startedAt int64) (int, error) {
 		live = append(live, Entry{
 			Service:     service,
 			Port:        p,
-			SessionKey:  key,
-			PID:         pid,
-			StartedAt:   startedAt,
+			Project:     project,
 			AllocatedAt: time.Now().Format(time.RFC3339),
 		})
 		reg.Allocations = live
@@ -174,9 +170,9 @@ func allocateFor(service, key string, pid int32, startedAt int64) (int, error) {
 	return port, err
 }
 
-// releaseWhere drops the current session's allocations matching match.
+// releaseWhere drops the current project's allocations matching match.
 func releaseWhere(match func(Entry) bool) error {
-	key, _, _, err := currentSession()
+	project, err := projectRoot()
 	if err != nil {
 		return err
 	}
@@ -188,7 +184,7 @@ func releaseWhere(match func(Entry) bool) error {
 		live, _ := gc(reg)
 		kept := live[:0]
 		for _, e := range live {
-			if e.SessionKey == key && match(e) {
+			if sameProject(e.Project, project) && match(e) {
 				continue
 			}
 			kept = append(kept, e)
@@ -201,12 +197,12 @@ func releaseWhere(match func(Entry) bool) error {
 	})
 }
 
-// cmdRelease drops the current session's allocation for service, if any.
+// cmdRelease drops the current project's allocation for service, if any.
 func cmdRelease(service string) error {
 	return releaseWhere(func(e Entry) bool { return e.Service == service })
 }
 
-// cmdReleaseAll drops every allocation the current session holds.
+// cmdReleaseAll drops every allocation the current project holds.
 func cmdReleaseAll() error {
 	return releaseWhere(func(Entry) bool { return true })
 }

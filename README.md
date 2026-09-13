@@ -1,8 +1,9 @@
 # dibs
 
-**Session-scoped port allocator.** No daemon, no background process, no config required. Ask `dibs` for a port, get one that's yours until your shell closes.
+**Project-scoped port allocator.** No daemon, no background process, no config required. Ask `dibs` for a port and get one that belongs to this project, today and next week.
 
 ```
+$ cd ~/Projects/shop
 $ dibs postgresql
 15400
 $ dibs postgresql
@@ -11,18 +12,27 @@ $ dibs opensearch
 19200
 ```
 
-Open a second terminal and run the same command — you get a *different* port, guaranteed not to collide with the first shell's.
+Move to another project and run the same command — you get a *different* port, guaranteed not to collide with the first one.
+
+```
+$ cd ~/Projects/blog
+$ dibs postgresql
+15401
+```
 
 ## Why
 
-Running several projects side by side, each spinning up its own Postgres/OpenSearch/whatever for local dev, means constant `EADDRINUSE` fights over hardcoded ports. `dibs` hands out a free port per service, remembers it for as long as your shell lives, and cleans up after itself once the shell exits — no `docker-compose.override.yml` juggling, no manually tracking which port you used last time.
+Running several projects side by side, each spinning up its own Postgres/OpenSearch/whatever for local dev, means constant `EADDRINUSE` fights over hardcoded ports. `dibs` hands out a free port per service *per project* and keeps handing out that same port every time you come back — no `docker-compose.override.yml` juggling, no manually tracking which port a project used last time.
+
+A port is a property of the project, not of the terminal you happen to be typing in. Close your laptop, reopen it a month later, run `dibs postgresql` in the same repo: same port, so the database volume, the `.env` file and the browser bookmark you left behind all still line up.
 
 ## How it works
 
-- **A shell is a session.** `dibs` identifies the calling shell by its parent PID plus that PID's exact start time, hashed into a session key. Same shell, same key, every time — call `dibs postgresql` five times in a row and you get the same port back. A new terminal tab has a different PID/start-time pair, so it gets its own allocation instead of colliding.
-- **Ports are leased, not owned forever.** Every call does a quick garbage-collection pass: any session whose shell process is no longer alive gets its ports freed automatically. There's nothing to clean up by hand and nothing running in the background between calls.
+- **A project is a directory.** `dibs` walks up from the working directory to the nearest `.git`, and uses that repo root as the project identity. No repo, no problem: the working directory itself is the project. Symlinks are resolved and paths are matched by the directory they actually point at, so one repo reached through a symlink, a bind mount, or a differently-cased path stays one project.
+- **Any subdirectory works.** Run `dibs postgresql` from the repo root, from `backend/`, from `services/api/deep/nested/dir` — same project, same port.
+- **Allocations are stable, not leased.** A project keeps its ports until you release them explicitly (`dibs release`) or its directory is deleted, at which point the next `dibs` call reclaims them. A directory temporarily out of reach — an unplugged drive, a network share that's down — keeps its ports; only a directory that is genuinely gone loses them.
 - **Allocation is real, not just bookkeeping.** Before handing out a port, `dibs` actually probes it with `net.Listen` — so a port used by something outside `dibs`'s own registry (left running from an old process, used by some other tool) is correctly skipped instead of double-booked.
-- **State lives in one file.** `~/.local/state/dibs/registry.json` maps `(session, service) → port`, guarded by a lock file so concurrent shells calling `dibs` at the same time don't race each other.
+- **State lives in one file.** `~/.local/state/dibs/registry.json` maps `(project, service) → port`, guarded by a lock file so two projects starting at the same time don't race each other.
 
 ## Install
 
@@ -53,16 +63,16 @@ xattr -d com.apple.quarantine dibs
 ## Usage
 
 ```
-dibs <service>              # get (or reuse) this session's port for <service>
+dibs <service>              # get (or reuse) this project's port for <service>
 dibs get <service>          # same thing, explicit form
 dibs env <service...>       # print export SERVICE_PORT=<port> for one or more services
-dibs list                   # list all live allocations across every session
+dibs list                   # list all live allocations across every project
 dibs list --json            # same, as JSON
-dibs release <service>      # free this session's port for <service> early
-dibs release --all          # free every port this session holds
+dibs release <service>      # free this project's port for <service>
+dibs release --all          # free every port this project holds
 dibs doctor                 # check dibs' on-disk state and config for issues
-dibs --version               # print the build version
-dibs completion <shell>      # generate a shell completion script
+dibs --version              # print the build version
+dibs completion <shell>     # generate a shell completion script
 ```
 
 `<service>` is just a label — `postgresql`, `opensearch`, `redis`, whatever you're running. Known services get sensible built-in ranges; anything else falls back to a generic range.
@@ -85,7 +95,7 @@ docker run -p "$POSTGRESQL_PORT:5432" postgres
 docker run -p "$OPENSEARCH_PORT:9200" opensearchproject/opensearch
 ```
 
-Run that script from two different terminals and each gets its own containers on their own ports, with zero coordination.
+Run that script in two different repos and each gets its own containers on their own ports, with zero coordination — and re-running it tomorrow in the same repo reuses yesterday's ports.
 
 ### Shell completion
 
@@ -114,7 +124,7 @@ Override any of these — or the generic fallback — in `~/.config/dibs/config.
 }
 ```
 
-A range is only used if it describes a usable span (`1 <= low <= high <= 65535`); anything else — inverted bounds, a range including port 0 — is ignored in favour of the built-in range. A malformed `config.json` is likewise ignored rather than fatal, so a bad edit never breaks port allocation mid-session. Run `dibs doctor` to see what was ignored and why.
+A range is only used if it describes a usable span (`1 <= low <= high <= 65535`); anything else — inverted bounds, a range including port 0 — is ignored in favour of the built-in range. A malformed `config.json` is likewise ignored rather than fatal, so a bad edit never breaks port allocation. Run `dibs doctor` to see what was ignored and why.
 
 ## Diagnostics
 
@@ -124,7 +134,8 @@ A range is only used if it describes a usable span (`1 <= low <= high <= 65535`)
 $ dibs doctor
 ✓ state dir: /Users/you/.local/state/dibs
 ✓ registry.json: 6 entries
-i 2 dead entries will be cleared on next call
+i 2 entries for missing projects will be cleared on next call
+i range 15400-15499 is 82/100 allocated; release projects you no longer use
 ✓ lock file: free
 ✓ config: /Users/you/.config/dibs/config.json (1 range overrides)
 ✗ range conflict: postgresql [15400-15499] overlaps redis [15450-15460]
@@ -134,11 +145,15 @@ Lines marked `i` are informational and don't affect the exit code — a lock hel
 
 ## Known limitations
 
-`dibs` must be invoked directly from the interactive shell, not through an intermediate forked subshell (some `bash -c` invocations, depending on whether bash tail-exec-optimizes the call away). A forked subshell has its own PID, so calls from it may not resolve to the same session as its parent shell.
+Ports are held per project, so two terminals in the *same* project share one port per service — that's the point. If you need two isolated instances of the same service in the same repo, ask for two different service labels (`dibs postgresql-a`, `dibs postgresql-b`).
 
-Allocating a port doesn't hold it. `dibs` checks the port is genuinely free (it binds it, then closes it immediately) and records it, but your service binds it some moments later. In that gap an unmanaged process could take the port. In practice the window is milliseconds and `dibs` never hands the same port to two sessions; holding the socket open would require a daemon, which this tool deliberately doesn't have.
+Allocations are permanent until released. A project you abandon without deleting its directory keeps its ports reserved, so a built-in range (100 ports wide) can eventually fill up; `dibs doctor` warns once a range is 80% allocated, `dibs list` shows who holds what, and `dibs release --all` from a project frees its ports.
 
-Sessions are keyed by PID plus process start time, read from `/proc` on Linux and `sysctl` on macOS. Those are the only supported platforms; there is no Windows build.
+Running `git init` in a parent directory moves the project root up, so the enclosing repo becomes the project and gets a fresh port. The old, now unreachable entry is reclaimed automatically on the next call rather than staying reserved forever.
+
+Allocating a port doesn't hold it. `dibs` checks the port is genuinely free (it binds it, then closes it immediately) and records it, but your service binds it some moments later. In that gap an unmanaged process could take the port. In practice the window is milliseconds and `dibs` never hands the same port to two projects; holding the socket open would require a daemon, which this tool deliberately doesn't have.
+
+Registries written by dibs ≤ 0.1.2 were keyed by shell session; those entries carry no project path and are dropped on the first call after upgrading. Nothing to do beyond re-running `dibs` in each project.
 
 ## Development
 

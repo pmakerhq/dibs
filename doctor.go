@@ -37,7 +37,10 @@ func cmdDoctor(w io.Writer) error {
 		report(true, "registry.json: %d entries", len(reg.Allocations))
 		live, _ := gc(reg)
 		if dead := len(reg.Allocations) - len(live); dead > 0 {
-			info("%d dead entries will be cleared on next call", dead)
+			info("%d entries for missing projects will be cleared on next call", dead)
+		}
+		for _, w := range checkRangeUsage(live) {
+			info("%s", w)
 		}
 	}
 

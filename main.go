@@ -15,7 +15,7 @@ var version = "dev"
 func main() {
 	rootCmd := &cobra.Command{
 		Use:           "dibs <service>",
-		Short:         "Session-scoped port allocator",
+		Short:         "Project-scoped port allocator",
 		Version:       version,
 		Args:          cobra.MaximumNArgs(1),
 		SilenceUsage:  true,
@@ -30,7 +30,7 @@ func main() {
 
 	getCmd := &cobra.Command{
 		Use:   "get <service>",
-		Short: "Get (or reuse) this session's port for <service>",
+		Short: "Get (or reuse) this project's port for <service>",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runGet(cmd.OutOrStdout(), args[0])
@@ -40,7 +40,7 @@ func main() {
 	var releaseAll bool
 	releaseCmd := &cobra.Command{
 		Use:   "release [service]",
-		Short: "Release this session's port for <service> (or all, with --all)",
+		Short: "Release this project's port for <service> (or all, with --all)",
 		Args: func(cmd *cobra.Command, args []string) error {
 			if releaseAll {
 				return cobra.NoArgs(cmd, args)
@@ -54,7 +54,7 @@ func main() {
 			return cmdRelease(args[0])
 		},
 	}
-	releaseCmd.Flags().BoolVar(&releaseAll, "all", false, "release every port held by this session")
+	releaseCmd.Flags().BoolVar(&releaseAll, "all", false, "release every port held by this project")
 
 	var listJSON bool
 	listCmd := &cobra.Command{
@@ -120,7 +120,7 @@ func runList(w io.Writer, asJSON bool) error {
 		return nil
 	}
 	for _, e := range entries {
-		fmt.Fprintf(w, "%-12s %-6d session=%s pid=%d allocated=%s\n", e.Service, e.Port, e.SessionKey, e.PID, e.AllocatedAt)
+		fmt.Fprintf(w, "%-12s %-6d %s allocated=%s\n", e.Service, e.Port, e.Project, e.AllocatedAt)
 	}
 	return nil
 }

@@ -1,6 +1,6 @@
 ## Project
 
-`dibs` — session-scoped port allocator. Run `dibs <service>` from a shell to get a free port for that service (e.g. `postgresql`, `opensearch`). Repeated calls from the same shell return the same port. A different shell (new terminal/tab/pane) gets a different, non-colliding port. Ports are released automatically once the owning shell exits (lazy GC on next call) — no daemon, no background process.
+`dibs` — project-scoped port allocator. Run `dibs <service>` from inside a project to get a free port for that service (e.g. `postgresql`, `opensearch`). Repeated calls from anywhere in that project — any subdirectory, any terminal, any day — return the same port. A different project gets a different, non-colliding port. A project's ports are freed explicitly (`dibs release`) or automatically once its directory no longer exists (lazy GC on next call) — no daemon, no background process.
 
 Go, single static binary, no daemon. Lives at `~/Projects/pmaker/dibs`, independent of any other project (usable from oddscore-platform, android, or anywhere else).
 
@@ -9,22 +9,24 @@ Go, single static binary, no daemon. Lives at `~/Projects/pmaker/dibs`, independ
 - `go build -o dibs .` — build the binary
 - `go test ./...` — run tests
 - `go vet ./...` — static checks
-- `./dibs <service>` — get/reuse this session's port (e.g. `./dibs postgresql`)
+- `./dibs <service>` — get/reuse this project's port (e.g. `./dibs postgresql`)
 - `./dibs get <service>` — same, explicit form
 - `./dibs env <service...>` — print `export SERVICE_PORT=<port>` for one or more services
 - `./dibs list` / `./dibs list --json` — list live allocations (also runs GC)
-- `./dibs release <service>` / `./dibs release --all` — free this session's port(s) early
+- `./dibs release <service>` / `./dibs release --all` — free this project's port(s)
 - `./dibs doctor` — check on-disk state (registry, lock, range config) for issues
 
 ## Architecture
 
-**Session identity** (`session.go`): a shell is identified by its PID (`$PPID` as seen by `dibs`, i.e. the parent process that invoked it) plus that PID's exact start time, hashed into a short session key. Start time is read per-OS (`session_linux.go` parses `/proc/<pid>/stat`, `session_darwin.go` calls `sysctl kern.proc.pid`); Linux and macOS are the only supported platforms. Same shell → same key on every call. A new shell has a different PID+start time → different key. If the OS recycles a PID after the original shell exited, the start time won't match, so it's correctly treated as a new session, not a collision.
+**Project identity** (`project.go`): a project is a directory. `projectRoot` walks up from the working directory to the nearest ancestor containing a `.git` entry and uses that path as the identity; with no `.git` anywhere above, the working directory itself is the project. Paths go through `filepath.EvalSymlinks`, and `sameProject` falls back to `os.SameFile` so a repo reached through a differently-cased path (case-insensitive APFS) or a bind mount still resolves to one allocation. Nothing about the calling process matters — no PID, no start time, no per-OS code. Every stat in this file goes through `statWithTimeout` (2s ceiling): a stale network mount blocks that one call instead of hanging forever, which matters because gc runs these stats while holding the registry-wide lock.
 
-Known limitation: `dibs` must be called directly from the interactive shell, not through an intermediate forked subshell (e.g. some `bash -c` invocations, depending on whether bash tail-exec-optimizes the call away). A forked subshell has its own PID, so calls from it may not resolve to the same session as the parent shell.
+`projectAlive` decides whether an entry survives GC: gone if the directory returns `fs.ErrNotExist` or `syscall.ENOTDIR` (an ancestor turned into a plain file — permanent, not transient, so it's treated the same as "not found"), or if the path is no longer its own root (a `git init` in a parent makes the old entry unaddressable, so it must be reclaimed rather than holding a port forever). Any other stat error — unplugged drive, unreachable network mount, our own timeout — keeps the entry, since a detached disk must not cost a project its stable port. `sameProject` tolerates the same errors, falling back to a case-insensitive string compare instead of failing closed, so a transient stat failure can't make a project's own entry look like a different project and trigger a duplicate allocation.
 
-**Registry** (`registry.go`): `~/.local/state/dibs/registry.json`, one entry per `(session_key, service)` → port. Writes are guarded by an exclusive lock (`~/.local/state/dibs/.lock`, via `gofrs/flock`) so two shells calling `dibs` at once don't race. Every call does a lazy GC pass first: any entry whose owning PID is dead or whose start time no longer matches is dropped and its port freed.
+`dirIdentity` records a path's device and inode; `allocateFor` compares an entry's stored identity against the current directory's before reusing it, so deleting a project and recreating a new one at the identical path gets a fresh port instead of silently inheriting the old one.
 
-**Port ranges** (`ranges.go`): built-in per-service ranges (`postgresql: 15400-15499`, `opensearch: 19200-19299`), unknown services fall back to a generic range (`20000-29999`). Allocation picks the first port in range that's neither already held by a live session nor actually bound on the host (`net.Listen` probe) — so a port used by something outside `dibs`'s own registry is still correctly skipped.
+**Registry** (`registry.go`): `~/.local/state/dibs/registry.json`, one entry per `(project, service)` → port (plus the `dev`/`ino` pair used for the recreation check above). Writes are guarded by an exclusive lock (`~/.local/state/dibs/.lock`, via `gofrs/flock`) so two projects calling `dibs` at once don't race. Every call does a lazy GC pass first: any entry `projectAlive` rejects is dropped and its port freed. Entries from the pre-0.2 session-keyed format carry no project path, so the same pass drops them — that's the whole migration story.
+
+**Port ranges** (`ranges.go`): built-in per-service ranges (`postgresql: 15400-15499`, `opensearch: 19200-19299`), unknown services fall back to a generic range (`20000-29999`). Allocation picks the first port in range that's neither already held by another project nor actually bound on the host (`net.Listen` probe) — so a port used by something outside `dibs`'s own registry is still correctly skipped. `checkRangeUsage` (surfaced by `dibs doctor`) counts, per configured range, how many live ports actually fall inside its current bounds — not which service originally claimed them — so narrowing a range after the fact doesn't produce a nonsensical ratio, and two ranges that overlap correctly see each other's allocations eating into their shared capacity.
 
 Ranges are overridable via `~/.config/dibs/config.json` (`config.go`, respects `XDG_CONFIG_HOME`):
 ```json

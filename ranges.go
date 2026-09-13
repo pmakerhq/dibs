@@ -60,7 +60,7 @@ func pickPortInRange(r [2]int, taken map[int]bool) (int, error) {
 			return p, nil
 		}
 	}
-	return 0, fmt.Errorf("no free port in range %d-%d", r[0], r[1])
+	return 0, fmt.Errorf("no free port in range %d-%d (run `dibs list` and release projects you no longer use)", r[0], r[1])
 }
 
 // effectiveRanges merges the built-in per-service ranges with config
@@ -129,6 +129,44 @@ func checkRangeOverlaps() []string {
 		}
 	}
 	return conflicts
+}
+
+// checkRangeUsage reports ranges that are filling up. Project allocations
+// never expire on their own, so a range creeping towards full is a problem
+// worth surfacing before the next new project gets no port at all. Usage is
+// counted by which ports actually fall inside a range right now, not by
+// each entry's service: that way narrowing a range after allocations were
+// made under a wider one doesn't produce a nonsensical ratio, and two named
+// ranges that overlap correctly see each other's allocations eating into
+// their shared capacity.
+func checkRangeUsage(live []Entry) []string {
+	ranges := effectiveRanges()
+	overrides, _ := loadRangeOverrides()
+	if g, ok := overrides["generic"]; ok && validRange(g) {
+		ranges["generic"] = g
+	} else {
+		ranges["generic"] = genericRange
+	}
+
+	var warnings []string
+	for _, name := range sortedNames(ranges) {
+		r := ranges[name]
+		if !validRange(r) {
+			continue
+		}
+		n := 0
+		for _, e := range live {
+			if e.Port >= r[0] && e.Port <= r[1] {
+				n++
+			}
+		}
+		span := r[1] - r[0] + 1
+		if n*5 >= span*4 {
+			warnings = append(warnings, fmt.Sprintf("range %d-%d (%s) is %d/%d allocated; release projects you no longer use", r[0], r[1], name, n, span))
+		}
+	}
+	sort.Strings(warnings)
+	return warnings
 }
 
 func pickPort(service string, taken map[int]bool) (int, error) {

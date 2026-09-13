@@ -1,9 +1,12 @@
 package main
 
 import (
+	"bytes"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 
@@ -203,4 +206,59 @@ func TestEnvVarName_ShellSafe(t *testing.T) {
 	assert.Equal(t, "POSTGRESQL_PORT", envVarName("postgresql"))
 	assert.Equal(t, "MY_SERVICE_PORT", envVarName("my-service"))
 	assert.Equal(t, "MY_SERVICE_PORT", envVarName("my.service"))
+	assert.Equal(t, "_3SCALE_PORT", envVarName("3scale"), "a leading digit would make the name unassignable in a shell")
+}
+
+func TestRunList_JSONReportsLiveAllocations(t *testing.T) {
+	isolate(t)
+	port, err := cmdGet("dibs-test-json")
+	require.NoError(t, err)
+
+	var buf bytes.Buffer
+	require.NoError(t, runList(&buf, true))
+
+	var entries []Entry
+	require.NoError(t, json.Unmarshal(buf.Bytes(), &entries), "--json must emit parseable JSON")
+	require.Len(t, entries, 1)
+	assert.Equal(t, "dibs-test-json", entries[0].Service)
+	assert.Equal(t, port, entries[0].Port)
+}
+
+func TestRunList_JSONEmitsArrayWhenEmpty(t *testing.T) {
+	isolate(t)
+	var buf bytes.Buffer
+	require.NoError(t, runList(&buf, true))
+	assert.Equal(t, "[]", strings.TrimSpace(buf.String()), "scripts consuming --json must always get an array, never null")
+}
+
+func TestRunEnv_ExportsOneLinePerService(t *testing.T) {
+	isolate(t)
+	var buf bytes.Buffer
+	require.NoError(t, runEnv(&buf, []string{"postgresql", "my.service"}))
+
+	lines := strings.Split(strings.TrimSpace(buf.String()), "\n")
+	require.Len(t, lines, 2)
+	assert.Regexp(t, `^export POSTGRESQL_PORT=\d+$`, lines[0])
+	assert.Regexp(t, `^export MY_SERVICE_PORT=\d+$`, lines[1])
+
+	port, err := cmdGet("postgresql")
+	require.NoError(t, err)
+	assert.Equal(t, fmt.Sprintf("export POSTGRESQL_PORT=%d", port), lines[0], "env must hand out the same port as get")
+}
+
+func TestCmdDoctor_PassesCleanStateAndFlagsBadConfig(t *testing.T) {
+	isolate(t)
+	var buf bytes.Buffer
+	require.NoError(t, cmdDoctor(&buf), "a clean state must pass every check")
+	assert.NotContains(t, buf.String(), "\u2717")
+
+	writeConfig(t, `{"ranges": {"redis": [15450, 15460]}}`)
+	buf.Reset()
+	assert.Error(t, cmdDoctor(&buf), "an overlapping range must fail the health gate")
+	assert.Contains(t, buf.String(), "range conflict")
+
+	writeConfig(t, `{"ranges": {`)
+	buf.Reset()
+	assert.Error(t, cmdDoctor(&buf), "a malformed config must fail the health gate")
+	assert.Contains(t, buf.String(), "config:")
 }

@@ -18,7 +18,7 @@ Go, single static binary, no daemon. Lives at `~/Projects/pmaker/dibs`, independ
 
 ## Architecture
 
-**Session identity** (`session.go`): a shell is identified by its PID (`$PPID` as seen by `dibs`, i.e. the parent process that invoked it) plus that PID's exact start time (`gopsutil` `process.CreateTime()`), hashed into a short session key. Same shell → same key on every call. A new shell has a different PID+start time → different key. If the OS recycles a PID after the original shell exited, the start time won't match, so it's correctly treated as a new session, not a collision.
+**Session identity** (`session.go`): a shell is identified by its PID (`$PPID` as seen by `dibs`, i.e. the parent process that invoked it) plus that PID's exact start time, hashed into a short session key. Start time is read per-OS (`session_linux.go` parses `/proc/<pid>/stat`, `session_darwin.go` calls `sysctl kern.proc.pid`); Linux and macOS are the only supported platforms. Same shell → same key on every call. A new shell has a different PID+start time → different key. If the OS recycles a PID after the original shell exited, the start time won't match, so it's correctly treated as a new session, not a collision.
 
 Known limitation: `dibs` must be called directly from the interactive shell, not through an intermediate forked subshell (e.g. some `bash -c` invocations, depending on whether bash tail-exec-optimizes the call away). A forked subshell has its own PID, so calls from it may not resolve to the same session as the parent shell.
 

@@ -5,20 +5,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"os"
-
-	"github.com/shirou/gopsutil/v3/process"
 )
-
-// processStartTime returns pid's start time (ms since epoch), used to
-// detect PID reuse: a dead shell's PID can be recycled by the OS, but its
-// start time won't match.
-func processStartTime(pid int32) (int64, error) {
-	p, err := process.NewProcess(pid)
-	if err != nil {
-		return 0, fmt.Errorf("pid %d not found: %w", pid, err)
-	}
-	return p.CreateTime()
-}
 
 // isAlive reports whether pid is still running the same process that
 // started at startedAt (guards against PID reuse after the shell exited).

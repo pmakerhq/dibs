@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"strings"
 
@@ -16,11 +17,14 @@ func main() {
 		Use:           "dibs <service>",
 		Short:         "Session-scoped port allocator",
 		Version:       version,
-		Args:          cobra.ExactArgs(1),
+		Args:          cobra.MaximumNArgs(1),
 		SilenceUsage:  true,
 		SilenceErrors: true,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runGet(args[0])
+			if len(args) == 0 {
+				return cmd.Help()
+			}
+			return runGet(cmd.OutOrStdout(), args[0])
 		},
 	}
 
@@ -29,7 +33,7 @@ func main() {
 		Short: "Get (or reuse) this session's port for <service>",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runGet(args[0])
+			return runGet(cmd.OutOrStdout(), args[0])
 		},
 	}
 
@@ -58,7 +62,7 @@ func main() {
 		Short: "List live allocations",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runList(listJSON)
+			return runList(cmd.OutOrStdout(), listJSON)
 		},
 	}
 	listCmd.Flags().BoolVar(&listJSON, "json", false, "output as JSON")
@@ -68,7 +72,7 @@ func main() {
 		Short: "Print PORT env vars for one or more services, e.g. eval $(dibs env postgresql)",
 		Args:  cobra.MinimumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runEnv(args)
+			return runEnv(cmd.OutOrStdout(), args)
 		},
 	}
 
@@ -77,7 +81,7 @@ func main() {
 		Short: "Check dibs' on-disk state and config for issues",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return cmdDoctor()
+			return cmdDoctor(cmd.OutOrStdout())
 		},
 	}
 
@@ -89,16 +93,16 @@ func main() {
 	}
 }
 
-func runGet(service string) error {
+func runGet(w io.Writer, service string) error {
 	port, err := cmdGet(service)
 	if err != nil {
 		return err
 	}
-	fmt.Println(port)
+	fmt.Fprintln(w, port)
 	return nil
 }
 
-func runList(asJSON bool) error {
+func runList(w io.Writer, asJSON bool) error {
 	entries, err := cmdList()
 	if err != nil {
 		return err
@@ -107,24 +111,25 @@ func runList(asJSON bool) error {
 		if entries == nil {
 			entries = []Entry{}
 		}
-		enc := json.NewEncoder(os.Stdout)
+		enc := json.NewEncoder(w)
 		enc.SetIndent("", "  ")
 		return enc.Encode(entries)
 	}
 	if len(entries) == 0 {
-		fmt.Println("no live allocations")
+		fmt.Fprintln(w, "no live allocations")
 		return nil
 	}
 	for _, e := range entries {
-		fmt.Printf("%-12s %-6d session=%s pid=%d allocated=%s\n", e.Service, e.Port, e.SessionKey, e.PID, e.AllocatedAt)
+		fmt.Fprintf(w, "%-12s %-6d session=%s pid=%d allocated=%s\n", e.Service, e.Port, e.SessionKey, e.PID, e.AllocatedAt)
 	}
 	return nil
 }
 
 // envVarName turns a service name into a shell-safe env var name, e.g.
 // "postgresql" -> "POSTGRESQL_PORT", "my-service" -> "MY_SERVICE_PORT".
-// Anything that isn't alphanumeric becomes "_", so `eval $(dibs env ...)`
-// can't emit an unassignable name for a service like "my.service".
+// Anything that isn't alphanumeric becomes "_", and a leading digit gets an
+// "_" prefix, so `eval $(dibs env ...)` can't emit an unassignable name for a
+// service like "my.service" or "3scale".
 func envVarName(service string) string {
 	safe := strings.Map(func(r rune) rune {
 		switch {
@@ -133,16 +138,19 @@ func envVarName(service string) string {
 		}
 		return '_'
 	}, service)
+	if safe != "" && safe[0] >= '0' && safe[0] <= '9' {
+		safe = "_" + safe
+	}
 	return strings.ToUpper(safe) + "_PORT"
 }
 
-func runEnv(services []string) error {
+func runEnv(w io.Writer, services []string) error {
 	for _, service := range services {
 		port, err := cmdGet(service)
 		if err != nil {
 			return err
 		}
-		fmt.Printf("export %s=%d\n", envVarName(service), port)
+		fmt.Fprintf(w, "export %s=%d\n", envVarName(service), port)
 	}
 	return nil
 }

@@ -67,7 +67,7 @@ dibs completion <shell>      # generate a shell completion script
 
 `<service>` is just a label — `postgresql`, `opensearch`, `redis`, whatever you're running. Known services get sensible built-in ranges; anything else falls back to a generic range.
 
-`dibs env` derives the variable name from the service: every non-alphanumeric character becomes `_` and the whole thing is upper-cased, so `my.service` yields `MY_SERVICE_PORT`.
+`dibs env` derives the variable name from the service: every non-alphanumeric character becomes `_`, a leading digit gets an `_` prefix, and the whole thing is upper-cased — so `my.service` yields `MY_SERVICE_PORT` and `3scale` yields `_3SCALE_PORT`.
 
 ### Example: wiring it into a dev script
 
@@ -132,9 +132,13 @@ i 2 dead entries will be cleared on next call
 
 Lines marked `i` are informational and don't affect the exit code — a lock held by a concurrent `dibs` call is normal, not a fault.
 
-## Known limitation
+## Known limitations
 
 `dibs` must be invoked directly from the interactive shell, not through an intermediate forked subshell (some `bash -c` invocations, depending on whether bash tail-exec-optimizes the call away). A forked subshell has its own PID, so calls from it may not resolve to the same session as its parent shell.
+
+Allocating a port doesn't hold it. `dibs` checks the port is genuinely free (it binds it, then closes it immediately) and records it, but your service binds it some moments later. In that gap an unmanaged process could take the port. In practice the window is milliseconds and `dibs` never hands the same port to two sessions; holding the socket open would require a daemon, which this tool deliberately doesn't have.
+
+Sessions are keyed by PID plus process start time, read from `/proc` on Linux and `sysctl` on macOS. Those are the only supported platforms; there is no Windows build.
 
 ## Development
 

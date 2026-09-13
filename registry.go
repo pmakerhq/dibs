@@ -174,8 +174,8 @@ func allocateFor(service, key string, pid int32, startedAt int64) (int, error) {
 	return port, err
 }
 
-// cmdRelease drops the current session's allocation for service, if any.
-func cmdRelease(service string) error {
+// releaseWhere drops the current session's allocations matching match.
+func releaseWhere(match func(Entry) bool) error {
 	key, _, _, err := currentSession()
 	if err != nil {
 		return err
@@ -188,7 +188,7 @@ func cmdRelease(service string) error {
 		live, _ := gc(reg)
 		kept := live[:0]
 		for _, e := range live {
-			if e.SessionKey == key && e.Service == service {
+			if e.SessionKey == key && match(e) {
 				continue
 			}
 			kept = append(kept, e)
@@ -201,31 +201,14 @@ func cmdRelease(service string) error {
 	})
 }
 
+// cmdRelease drops the current session's allocation for service, if any.
+func cmdRelease(service string) error {
+	return releaseWhere(func(e Entry) bool { return e.Service == service })
+}
+
 // cmdReleaseAll drops every allocation the current session holds.
 func cmdReleaseAll() error {
-	key, _, _, err := currentSession()
-	if err != nil {
-		return err
-	}
-	return withLock(func() error {
-		reg, err := loadRegistry()
-		if err != nil {
-			return err
-		}
-		live, _ := gc(reg)
-		kept := live[:0]
-		for _, e := range live {
-			if e.SessionKey == key {
-				continue
-			}
-			kept = append(kept, e)
-		}
-		if len(kept) == len(reg.Allocations) {
-			return nil
-		}
-		reg.Allocations = kept
-		return saveRegistry(reg)
-	})
+	return releaseWhere(func(Entry) bool { return true })
 }
 
 // cmdList returns the live allocations after GC.

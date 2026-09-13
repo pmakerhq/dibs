@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"io"
 
 	"github.com/gofrs/flock"
 )
@@ -9,7 +10,7 @@ import (
 // cmdDoctor runs a handful of sanity checks on dibs' on-disk state and
 // config, printing one line per check. It returns an error if any check
 // fails, so `dibs doctor` can be used as a CI/shell health gate.
-func cmdDoctor() error {
+func cmdDoctor(w io.Writer) error {
 	healthy := true
 	report := func(ok bool, format string, args ...any) {
 		mark := "✓"
@@ -17,10 +18,10 @@ func cmdDoctor() error {
 			mark = "✗"
 			healthy = false
 		}
-		fmt.Printf("%s %s\n", mark, fmt.Sprintf(format, args...))
+		fmt.Fprintf(w, "%s %s\n", mark, fmt.Sprintf(format, args...))
 	}
 	info := func(format string, args ...any) {
-		fmt.Printf("i %s\n", fmt.Sprintf(format, args...))
+		fmt.Fprintf(w, "i %s\n", fmt.Sprintf(format, args...))
 	}
 
 	if dir, err := stateDir(); err != nil {

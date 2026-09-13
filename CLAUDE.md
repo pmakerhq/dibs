@@ -1,6 +1,6 @@
 ## Project
 
-`dibs` — project-scoped port allocator. Run `dibs <service>` from inside a project to get a free port for that service (e.g. `postgresql`, `opensearch`). Repeated calls from anywhere in that project — any subdirectory, any terminal, any day — return the same port. A different project gets a different, non-colliding port. A project's ports are freed explicitly (`dibs release`) or automatically once its directory no longer exists (lazy GC on next call) — no daemon, no background process.
+`dibs` — project-scoped port allocator. Run `dibs <service>` from inside a project to get a free port for that service (e.g. `postgresql`, `opensearch` — any label, dibs has no built-in knowledge of what a service is). Repeated calls from anywhere in that project — any subdirectory, any terminal, any day — return the same port. A different project gets a different, non-colliding port. A project's ports are freed explicitly (`dibs release`) or automatically once its directory no longer exists (lazy GC on next call) — no daemon, no background process.
 
 Go, single static binary, no daemon. Lives at `~/Projects/pmaker/dibs`, independent of any other project (usable from oddscore-platform, android, or anywhere else).
 
@@ -26,7 +26,7 @@ Go, single static binary, no daemon. Lives at `~/Projects/pmaker/dibs`, independ
 
 **Registry** (`registry.go`): `~/.local/state/dibs/registry.json`, one entry per `(project, service)` → port (plus the `dev`/`ino` pair used for the recreation check above). Writes are guarded by an exclusive lock (`~/.local/state/dibs/.lock`, via `gofrs/flock`) so two projects calling `dibs` at once don't race. Every call does a lazy GC pass first: any entry `projectAlive` rejects is dropped and its port freed. Entries from the pre-0.2 session-keyed format carry no project path, so the same pass drops them — that's the whole migration story.
 
-**Port ranges** (`ranges.go`): built-in per-service ranges (`postgresql: 15400-15499`, `opensearch: 19200-19299`), unknown services fall back to a generic range (`20000-29999`). Allocation picks the first port in range that's neither already held by another project nor actually bound on the host (`net.Listen` probe) — so a port used by something outside `dibs`'s own registry is still correctly skipped. `checkRangeUsage` (surfaced by `dibs doctor`) counts, per configured range, how many live ports actually fall inside its current bounds — not which service originally claimed them — so narrowing a range after the fact doesn't produce a nonsensical ratio, and two ranges that overlap correctly see each other's allocations eating into their shared capacity.
+**Port ranges** (`ranges.go`): every service falls back to one generic range (`20000-29999`) unless a config override gives it its own — there are no built-in per-service ranges. Allocation picks the first port in range that's neither already held by another project nor actually bound on the host (`net.Listen` probe) — so a port used by something outside `dibs`'s own registry is still correctly skipped. `checkRangeUsage` (surfaced by `dibs doctor`) counts, per configured range, how many live ports actually fall inside its current bounds — not which service originally claimed them — so narrowing a range after the fact doesn't produce a nonsensical ratio, and two ranges that overlap correctly see each other's allocations eating into their shared capacity.
 
 Ranges are overridable via `~/.config/dibs/config.json` (`config.go`, respects `XDG_CONFIG_HOME`):
 ```json
@@ -37,7 +37,7 @@ Ranges are overridable via `~/.config/dibs/config.json` (`config.go`, respects `
   }
 }
 ```
-`generic` overrides the fallback range; any other key overrides that service's range, built-in or not.
+`generic` overrides the fallback range; any other key gives that service its own dedicated range.
 
 ## Style
 

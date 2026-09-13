@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"syscall"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -413,4 +414,68 @@ func TestCmdDoctor_PassesCleanStateAndFlagsBadConfig(t *testing.T) {
 	buf.Reset()
 	assert.Error(t, cmdDoctor(&buf), "a malformed config must fail the health gate")
 	assert.Contains(t, buf.String(), "config:")
+}
+
+func TestAllocateFor_PathRecreationGetsFreshIdentity(t *testing.T) {
+	isolate(t)
+	base := t.TempDir()
+	project := filepath.Join(base, "app")
+	require.NoError(t, os.MkdirAll(project, 0o755))
+
+	_, err := allocateFor("dibs-test-recreate", project)
+	require.NoError(t, err)
+
+	require.NoError(t, os.RemoveAll(project))
+	require.NoError(t, os.MkdirAll(project, 0o755))
+	wantDev, wantIno, ok := dirIdentity(project)
+	require.True(t, ok)
+
+	_, err = allocateFor("dibs-test-recreate", project)
+	require.NoError(t, err)
+
+	entries, err := cmdList()
+	require.NoError(t, err)
+	require.Len(t, entries, 1, "the stale entry must be replaced, not kept alongside a new one")
+	assert.Equal(t, wantDev, entries[0].Dev)
+	assert.Equal(t, wantIno, entries[0].Ino, "the entry must reflect the recreated directory, not the deleted one")
+}
+
+func TestProjectAlive_ENOTDIRIsTreatedAsGone(t *testing.T) {
+	isolate(t)
+	base := t.TempDir()
+	parent := filepath.Join(base, "parent")
+	project := filepath.Join(parent, "repo")
+	require.NoError(t, os.MkdirAll(project, 0o755))
+
+	port, err := allocateFor("dibs-test-enotdir", project)
+	require.NoError(t, err)
+
+	// Replace the ancestor directory with a plain file: os.Stat(project) now
+	// fails with ENOTDIR, a permanent condition, not "not found".
+	require.NoError(t, os.RemoveAll(parent))
+	require.NoError(t, os.WriteFile(parent, []byte("not a directory"), 0o644))
+	t.Cleanup(func() { os.RemoveAll(parent) })
+
+	_, statErr := os.Stat(project)
+	require.True(t, errors.Is(statErr, syscall.ENOTDIR), "the simulated failure must be ENOTDIR")
+
+	entries, err := cmdList()
+	require.NoError(t, err)
+	for _, e := range entries {
+		assert.NotEqual(t, port, e.Port, "an ancestor permanently replaced by a file must not keep the entry alive forever")
+	}
+}
+
+func TestCheckRangeUsage_WarnsOnSharedOverlapExhaustion(t *testing.T) {
+	isolate(t)
+	writeConfig(t, `{"ranges": {"dibs-test-a": [45000, 45004], "dibs-test-b": [45001, 45004]}}`)
+
+	var live []Entry
+	for p := 45001; p <= 45004; p++ {
+		live = append(live, Entry{Service: "dibs-test-b", Port: p})
+	}
+
+	warnings := checkRangeUsage(live)
+	joined := strings.Join(warnings, "\n")
+	assert.Contains(t, joined, "dibs-test-a", "a's shared sub-range being exhausted by b's allocations must still warn, even though a has no allocations of its own")
 }

@@ -15,6 +15,8 @@ type Entry struct {
 	Port        int    `json:"port"`
 	Project     string `json:"project"`
 	AllocatedAt string `json:"allocated_at"`
+	Dev         uint64 `json:"dev,omitempty"`
+	Ino         uint64 `json:"ino,omitempty"`
 }
 
 type Registry struct {
@@ -142,27 +144,43 @@ func allocateFor(service, project string) (int, error) {
 		live, taken := gc(reg)
 		collected := len(live) != len(reg.Allocations)
 
-		for _, e := range live {
-			if e.Service == service && sameProject(e.Project, project) {
-				port = e.Port
-				if !collected {
-					return nil
-				}
-				reg.Allocations = live
-				return saveRegistry(reg)
+		dev, ino, hasIdentity := dirIdentity(project)
+
+		for i, e := range live {
+			if e.Service != service || !sameProject(e.Project, project) {
+				continue
 			}
+			if hasIdentity && e.Dev != 0 && (e.Dev != dev || e.Ino != ino) {
+				// The directory was deleted and recreated at this path
+				// since the entry was written: it's a different directory
+				// now, so drop the stale entry and allocate a fresh port.
+				live = append(live[:i:i], live[i+1:]...)
+				delete(taken, e.Port)
+				collected = true
+				break
+			}
+			port = e.Port
+			if !collected {
+				return nil
+			}
+			reg.Allocations = live
+			return saveRegistry(reg)
 		}
 
 		p, err := pickPort(service, taken)
 		if err != nil {
 			return err
 		}
-		live = append(live, Entry{
+		newEntry := Entry{
 			Service:     service,
 			Port:        p,
 			Project:     project,
 			AllocatedAt: time.Now().Format(time.RFC3339),
-		})
+		}
+		if hasIdentity {
+			newEntry.Dev, newEntry.Ino = dev, ino
+		}
+		live = append(live, newEntry)
 		reg.Allocations = live
 		port = p
 		return saveRegistry(reg)

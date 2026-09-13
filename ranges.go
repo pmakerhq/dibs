@@ -133,17 +133,36 @@ func checkRangeOverlaps() []string {
 
 // checkRangeUsage reports ranges that are filling up. Project allocations
 // never expire on their own, so a range creeping towards full is a problem
-// worth surfacing before the next new project gets no port at all.
+// worth surfacing before the next new project gets no port at all. Usage is
+// counted by which ports actually fall inside a range right now, not by
+// each entry's service: that way narrowing a range after allocations were
+// made under a wider one doesn't produce a nonsensical ratio, and two named
+// ranges that overlap correctly see each other's allocations eating into
+// their shared capacity.
 func checkRangeUsage(live []Entry) []string {
-	used := map[[2]int]int{}
-	for _, e := range live {
-		used[rangeFor(e.Service)]++
+	ranges := effectiveRanges()
+	overrides, _ := loadRangeOverrides()
+	if g, ok := overrides["generic"]; ok && validRange(g) {
+		ranges["generic"] = g
+	} else {
+		ranges["generic"] = genericRange
 	}
+
 	var warnings []string
-	for r, n := range used {
+	for _, name := range sortedNames(ranges) {
+		r := ranges[name]
+		if !validRange(r) {
+			continue
+		}
+		n := 0
+		for _, e := range live {
+			if e.Port >= r[0] && e.Port <= r[1] {
+				n++
+			}
+		}
 		span := r[1] - r[0] + 1
 		if n*5 >= span*4 {
-			warnings = append(warnings, fmt.Sprintf("range %d-%d is %d/%d allocated; release projects you no longer use", r[0], r[1], n, span))
+			warnings = append(warnings, fmt.Sprintf("range %d-%d (%s) is %d/%d allocated; release projects you no longer use", r[0], r[1], name, n, span))
 		}
 	}
 	sort.Strings(warnings)

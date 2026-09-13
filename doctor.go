@@ -39,8 +39,8 @@ func cmdDoctor(w io.Writer) error {
 		if dead := len(reg.Allocations) - len(live); dead > 0 {
 			info("%d entries for missing projects will be cleared on next call", dead)
 		}
-		for _, w := range checkRangeUsage(live) {
-			info("%s", w)
+		for _, line := range checkRangeUsage(live) {
+			info("%s", line)
 		}
 	}
 

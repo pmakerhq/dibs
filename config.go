@@ -28,7 +28,7 @@ func configPath() (string, error) {
 // loadRangeOverrides reads ~/.config/dibs/config.json, if present. A missing
 // file yields no overrides and no error; a malformed one yields an error that
 // callers on the allocation path deliberately ignore (falling back to the
-// built-in ranges) and that `dibs doctor` surfaces.
+// generic range) and that `dibs doctor` surfaces.
 func loadRangeOverrides() (map[string][2]int, error) {
 	cp, err := configPath()
 	if err != nil {

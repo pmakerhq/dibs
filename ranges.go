@@ -82,15 +82,11 @@ func sortedNames(m map[string][2]int) []string {
 // checkRangeBounds reports every configured range whose bounds can't describe
 // a usable port span; such ranges are ignored at allocation time.
 func checkRangeBounds() []string {
-	ranges := effectiveRanges()
 	overrides, _ := loadRangeOverrides()
-	if g, ok := overrides["generic"]; ok {
-		ranges["generic"] = g
-	}
 
 	var problems []string
-	for _, svc := range sortedNames(ranges) {
-		if r := ranges[svc]; !validRange(r) {
+	for _, svc := range sortedNames(overrides) {
+		if r := overrides[svc]; !validRange(r) {
 			problems = append(problems, fmt.Sprintf("%s [%d-%d] is not a usable port range, ignored", svc, r[0], r[1]))
 		}
 	}
@@ -128,8 +124,13 @@ func checkRangeOverlaps() []string {
 // ranges that overlap correctly see each other's allocations eating into
 // their shared capacity.
 func checkRangeUsage(live []Entry) []string {
-	ranges := effectiveRanges()
 	overrides, _ := loadRangeOverrides()
+	ranges := map[string][2]int{}
+	for svc, r := range overrides {
+		if svc != "generic" {
+			ranges[svc] = r
+		}
+	}
 	if g, ok := overrides["generic"]; ok && validRange(g) {
 		ranges["generic"] = g
 	} else {

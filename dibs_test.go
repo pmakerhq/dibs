@@ -335,6 +335,18 @@ func TestLoadRangeOverrides_ReportsMalformedConfig(t *testing.T) {
 	assert.Equal(t, genericRange, rangeFor("postgresql"), "allocation still falls back to the generic range")
 }
 
+func TestRangeFor_InvalidServiceOverrideFallsBackToGenericOverride(t *testing.T) {
+	isolate(t)
+	writeConfig(t, `{
+		"ranges": {
+			"postgresql": [16100, 16000],
+			"generic": [21000, 21009]
+		}
+	}`)
+
+	assert.Equal(t, [2]int{21000, 21009}, rangeFor("postgresql"), "inverted bounds must fall back to the configured generic override, not the hardcoded generic range")
+}
+
 func TestRangeFor_IgnoresInvalidOverrides(t *testing.T) {
 	isolate(t)
 	writeConfig(t, `{
@@ -344,8 +356,8 @@ func TestRangeFor_IgnoresInvalidOverrides(t *testing.T) {
 		}
 	}`)
 
-	assert.Equal(t, genericRange, rangeFor("postgresql"), "inverted bounds must fall back to the generic range")
-	assert.Equal(t, genericRange, rangeFor("some-unknown-service"), "a range including port 0 must fall back to the built-in generic range")
+	assert.Equal(t, genericRange, rangeFor("postgresql"), "inverted bounds and an invalid generic override must both fall back to the hardcoded generic range")
+	assert.Equal(t, genericRange, rangeFor("some-unknown-service"), "a range including port 0 must fall back to the hardcoded generic range")
 
 	problems := checkRangeBounds()
 	require.Len(t, problems, 2, "doctor must surface both invalid ranges")

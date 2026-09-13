@@ -130,9 +130,9 @@ $ dibs doctor
 ✓ state dir: /Users/you/.local/state/dibs
 ✓ registry.json: 6 entries
 i 2 entries for missing projects will be cleared on next call
-i range 15400-15499 is 82/100 allocated; release projects you no longer use
+i range 15400-15499 (postgresql) is 82/100 allocated; release projects you no longer use
 ✓ lock file: free
-✓ config: /Users/you/.config/dibs/config.json (1 range overrides)
+✓ config: /Users/you/.config/dibs/config.json (2 range overrides)
 ✗ range conflict: postgresql [15400-15499] overlaps redis [15450-15460]
 ```
 
@@ -142,7 +142,7 @@ Lines marked `i` are informational and don't affect the exit code — a lock hel
 
 Ports are held per project, so two terminals in the *same* project share one port per service — that's the point. If you need two isolated instances of the same service in the same repo, ask for two different service labels (`dibs postgresql-a`, `dibs postgresql-b`).
 
-Allocations are permanent until released. A project you abandon without deleting its directory keeps its ports reserved, so a narrow range can eventually fill up; `dibs doctor` warns once a range is 80% allocated, `dibs list` shows who holds what, and `dibs release --all` from a project frees its ports.
+Allocations are permanent until released. A project you abandon without deleting its directory keeps its ports reserved, so a range can eventually fill up — the generic range is wide (10000 ports) so this mostly matters once you've configured a narrower one for a service; `dibs doctor` warns once a range is 80% allocated, `dibs list` shows who holds what, and `dibs release --all` from a project frees its ports.
 
 Running `git init` in a parent directory moves the project root up, so the enclosing repo becomes the project and gets a fresh port. The old, now unreachable entry is reclaimed automatically on the next call rather than staying reserved forever.
 
